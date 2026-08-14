@@ -1,0 +1,216 @@
+# Network Security Assessment Report
+
+**Prepared by:** Christiana
+**Date:** August 13–14, 2026
+**Classification:** Confidential — For Internal / Portfolio Use Only
+
+---
+
+## 1. Scope of Assessment
+
+| Item | Detail |
+|---|---|
+| **Target IP range(s)** | 172.17.0.0/24 (Docker bridge network, VirtualBox-hosted Kali lab) |
+| **In-scope hosts** | 172.17.0.1 — Docker bridge gateway / Kali host; 172.17.0.2 — DVWA (Damn Vulnerable Web Application) container |
+| **In-scope services** | HTTP (80), SSH (22) |
+| **Out of scope** | Any host/service outside the 172.17.0.0/24 range; no denial-of-service testing; no exploitation beyond documented PoC steps (credential capture via passive traffic analysis only) |
+| **Assessment window** | August 13, 2026, 21:00–22:00 (GMT-4) |
+| **Assessment type** | Authorized internal test — self-owned lab environment |
+| **Authorization** | This assessment was performed against a Docker-based DVWA lab environment owned and controlled by the assessor, for educational and portfolio purposes. No third-party or production systems were tested. |
+
+> **Note:** Always state authorization explicitly in a real report — it's the first thing a hiring manager or client checks.
+
+---
+
+## 2. Executive Summary *(1 page, non-technical)*
+
+This assessment evaluated the security posture of a Dockerized DVWA (Damn Vulnerable Web Application) test environment over a one-hour window on August 13, 2026. Testing covered network reconnaissance, live traffic analysis, and web application vulnerability scanning across two in-scope hosts.
+
+**Overall Risk Rating:** High
+
+**Key findings at a glance:**
+- 1 Critical finding requiring immediate attention
+- 2 High-severity findings
+- 3 Medium-severity findings
+- 2 Low-severity findings
+
+**Top 3 risks in plain language:**
+1. **Login credentials are sent in plain text.** When a user logs into the web application, their username and password travel across the network completely unprotected — anyone able to observe network traffic could read them directly, without needing to break any encryption.
+2. **A sensitive configuration folder is publicly browsable.** The web server exposes a directory that can reveal internal configuration details — information that's normally meant to stay private and could help an attacker plan further attacks.
+3. **The web server software is out of date.** Running an outdated version increases the chance that known, publicly-documented weaknesses could be used against it.
+
+**Business impact:** If exploited, these issues could allow someone with access to the local network to intercept login credentials, gain unauthorized access to the application, or use exposed configuration details to plan a deeper attack. Because the Critical and High findings both stem from a lack of basic encryption and access controls, they are also the most straightforward to fix.
+
+**Recommendation:** Address the Critical finding (unencrypted credentials) within the first week by enabling HTTPS, alongside the two High findings around directory exposure. The full prioritized fix order and effort estimates are detailed in Section 6.
+
+**Recommendation:** [1–2 sentences pointing to the remediation roadmap — e.g. "We recommend addressing the two Critical findings within 7 days, with the full roadmap detailed in Section 6."]
+
+---
+
+## 3. Methodology
+
+This assessment followed a three-phase black-box/grey-box approach against the defined scope:
+
+1. **Reconnaissance** — Network and service discovery using Nmap
+2. **Traffic Analysis** — Live packet capture and protocol analysis using Wireshark
+3. **Web Vulnerability Scanning** — Automated scanning of discovered web services using Nikto
+
+All activity was conducted from a Kali Linux workstation within the assessment window stated in Section 1.
+
+---
+
+## 4. Technical Findings
+
+### 4.1 Phase 1 — Reconnaissance (Nmap)
+
+**Command used:**
+```
+sudo nmap -sV -O 172.17.0.0/24 -oN nmap_results.txt
+```
+
+**Date/time:** 2026-08-13 21:05 -0400
+**Target range:** 172.17.0.0/24 (Docker bridge network hosting the test environment)
+
+**Scan summary:**
+
+| Host (IP) | Role | OS Guess | Open Ports | Services & Versions |
+|---|---|---|---|---|
+| 172.17.0.2 | DVWA web application container | Linux (no exact match — Docker networking limits OS fingerprint accuracy) | 80/tcp | Apache httpd 2.4.25 (Debian) |
+| 172.17.0.1 | Docker bridge gateway (Kali host) | Linux 5.0–6.2 (96% confidence, aggressive guess) | 22/tcp | OpenSSH 10.3p1 Debian 4 (protocol 2.0) |
+
+**Observations:**
+- **172.17.0.2 (DVWA):** Apache httpd 2.4.25 is a 2016-era release. While DVWA is intentionally configured as a vulnerable training target, in a production context this version would warrant verification of the underlying Debian security-patch level, since Debian backports fixes without always bumping the displayed version string. Only one service (HTTP) is exposed on this host — a reasonably minimal attack surface for what is otherwise designed to be maximally vulnerable at the application layer.
+- **172.17.0.1 (Docker gateway):** SSH is reachable from the container bridge network. This is expected in a Docker/Kali lab setup and low-risk in isolation, but represents a management interface exposed to the same network segment as a deliberately vulnerable web app — worth noting as a defense-in-depth observation (network segmentation) rather than a direct vulnerability.
+- OS fingerprinting returned no exact matches for either host — normal behavior for Nmap against Docker's virtualized networking, and noted here rather than treated as a scan failure.
+
+**Evidence:** ![Nmap scan output](screenshots/nmap_scan.png)
+
+*(Also attach the raw `nmap_results.txt` file to the repo.)*
+
+---
+
+### 4.2 Phase 2 — Traffic Analysis (Wireshark)
+
+**Capture details:**
+- Duration: 5+ minutes (combined capture across interfaces to capture DVWA traffic and host DNS resolution)
+- Interface: `docker0` (DVWA/HTTP/ARP traffic) and `any` (supplementary capture to confirm DNS behavior)
+- Filter(s) applied: `http`, `http.request.method == "POST"`, `dns`, `arp`
+- File: `wireshark_capture.pcapng`, 554 packets captured
+
+**HTTP Traffic:**
+Three POST requests were observed between the test workstation (172.17.0.1) and the DVWA container (172.17.0.2): two to `/login.php` and one to `/security.php`. Expanding the **HTML Form URL Encoded** section of the login POST (frame 35) revealed the full form submission in plaintext:
+
+```
+Form item: "username" = "admin"
+Form item: "password" = "password"
+Form item: "Login" = "Login"
+Form item: "user_token" = "b931b5906ececea169bf50..."
+```
+
+The username and password are transmitted with zero encryption — anyone able to observe traffic on this network segment (e.g. via ARP spoofing, a compromised switch, or a shared Wi-Fi network) could read DVWA login credentials directly off the wire. The session's anti-CSRF `user_token` is also exposed in the same request; while CSRF tokens are typically single-use/session-bound and lower risk on their own, their exposure alongside credentials further illustrates the lack of transport-layer protection.
+
+- Evidence: ![HTTP POST credentials in cleartext](screenshots/wireshark_http_form.png)
+
+**DNS Traffic:**
+Standard DNS query/response pairs were observed from the test workstation (10.0.2.15) to its resolver (192.168.0.1), consistent with normal host-level name resolution. No anomalous or unexpected domains were queried. This traffic reflects the host's general DNS behavior rather than DVWA-specific activity, since DVWA was accessed directly by IP address rather than hostname.
+
+**ARP Traffic:**
+Standard ARP request/reply pairs were observed between the Docker gateway (172.17.0.1) and the DVWA container (172.17.0.2) — each "who has" request cleanly answered by the corresponding "is at" reply. No duplicate or conflicting IP-to-MAC mappings were observed, indicating no evidence of ARP spoofing on this segment during the capture window.
+
+**Unencrypted sensitive data observed:**
+
+| # | Protocol | Data Exposed | Source → Destination |
+|---|---|---|---|
+| 1 | HTTP | DVWA login credentials (`username=admin`, `password=password`) transmitted in cleartext form data | 172.17.0.1 → 172.17.0.2 |
+| 2 | HTTP | Session CSRF token (`user_token`) exposed alongside credentials in the same unencrypted request | 172.17.0.1 → 172.17.0.2 |
+
+**Evidence:** ![Wireshark HTTP form data — cleartext credentials](screenshots/wireshark_http_form.png)
+
+*(Attach the raw `wireshark_capture.pcapng` file to the repo — DVWA's default lab credentials were used throughout, so it's safe to commit.)*
+
+---
+
+### 4.3 Phase 3 — Web Vulnerability Scan (Nikto)
+
+**Target(s):** http://172.17.0.2/ (DVWA, identified as the sole web server in Phase 1)
+
+**Command used:**
+```
+nikto -h http://172.17.0.2 -o nikto_results.txt
+```
+
+**Scan stats:** 8,069 requests sent, 16 items reported, completed in 347 seconds (2026-08-13 21:22–21:28)
+
+**Findings summary:**
+
+| Finding | Detail | Severity |
+|---|---|---|
+| Directory indexing on `/config/` | File listing of the config directory is publicly browsable — a common location for DB credentials, secrets, and app config | High |
+| Configuration information potentially accessible on `/config/` | Nikto flags this path as a likely source of remotely-readable config data | High |
+| Directory indexing on `/docs/` | Documentation folder browsable — lower sensitivity than `/config/` but still unintended disclosure | Low |
+| PHPSESSID cookie missing `HttpOnly` flag | Session cookie readable via JavaScript, increasing session-hijack risk if combined with an XSS vulnerability | Medium |
+| Apache/2.4.25 confirmed outdated (current ≥2.4.66) | Corroborates the Nmap finding (F-001) via an independent tool | *(cross-referenced to F-001)* |
+| Missing security headers (HSTS, X-Content-Type-Options, Referrer-Policy, CSP, Permissions-Policy) | Standard browser-side hardening headers absent; each individually low-impact but weakens defense-in-depth | Low |
+| `.gitignore` file exposed | Discloses information about the project's directory/file structure to an attacker | Low |
+| `/icons/README`, `/login.php` discovered | Default Apache file and expected admin login page — expected in this environment | Info |
+
+**Evidence:** ![Nikto scan results](screenshots/nikto_scan.png)
+
+---
+
+## 5. Findings Register
+
+| Finding ID | Description | Severity | Affected Asset | Recommended Fix |
+|---|---|---|---|---|
+| F-001 | Apache httpd 2.4.25 in use (current ≥2.4.66); confirmed outdated by both Nmap and Nikto | Medium | 172.17.0.2:80 | Upgrade to a currently supported Apache release, or verify and document the Debian security-patch backport level |
+| F-002 | SSH management service reachable from the container/bridge network segment | Low | 172.17.0.1:22 | Restrict SSH exposure to management-only network segments; disable password auth in favor of key-based auth |
+| F-003 | DVWA login form transmits credentials (`username`, `password`) and CSRF token in cleartext over unencrypted HTTP — confirmed via Wireshark packet capture (frame 35) | Critical | 172.17.0.2 (DVWA login) | Enforce HTTPS/TLS site-wide; redirect HTTP to HTTPS; enable HSTS; ensure session cookies use the `Secure` flag once TLS is in place |
+| F-004 | Directory indexing enabled on `/config/`, with configuration information potentially readable | High | 172.17.0.2:80 (/config/) | Disable directory indexing; move sensitive config files outside the web root or restrict via server config |
+| F-005 | Directory indexing enabled on `/docs/` | Low | 172.17.0.2:80 (/docs/) | Disable directory indexing in Apache config (`Options -Indexes`) |
+| F-006 | Session cookie (PHPSESSID) set without the `HttpOnly` flag | Medium | 172.17.0.2:80 | Set `HttpOnly` (and `Secure`, once HTTPS is enforced) on session cookies |
+| F-007 | Missing recommended security headers (HSTS, X-Content-Type-Options, Referrer-Policy, CSP, Permissions-Policy) | Low | 172.17.0.2:80 | Add the missing headers via Apache config or application middleware |
+| F-008 | `.gitignore` file exposed, revealing directory structure | Low | 172.17.0.2:80 (/.gitignore) | Remove build/deployment artifacts like `.gitignore` from the publicly served web root |
+
+*(Add/remove rows to match your actual findings — aim for at least 6–10 findings across all three phases for a solid portfolio project.)*
+
+**Severity definitions used:**
+
+| Severity | Definition |
+|---|---|
+| Critical | Immediately exploitable, high impact — data breach, full compromise, or credential exposure in cleartext |
+| High | Significant weakness, exploitable with moderate effort, serious potential impact |
+| Medium | Weakness that increases risk but requires additional conditions/access to exploit |
+| Low | Minor issue, limited impact on its own |
+| Info | No direct risk, but worth noting (hardening opportunity, informational disclosure) |
+
+---
+
+## 6. Remediation Roadmap
+
+| Priority | Finding ID | Fix | Effort | Owner | Target Timeline |
+|---|---|---|---|---|---|
+| 1 | F-003 | Enforce HTTPS/TLS site-wide; redirect HTTP→HTTPS; enable HSTS | Medium | Web/App team | Immediate (0–3 days) |
+| 2 | F-004 | Disable directory indexing on `/config/`; move sensitive config outside web root | Easy | Sysadmin | 3–7 days |
+| 3 | F-001 | Upgrade Apache to a currently supported release / verify patch level | Medium | Sysadmin | 7 days |
+| 4 | F-006 | Add `HttpOnly` (and `Secure`, post-TLS) flags to session cookies | Easy | Web/App team | 7 days |
+| 5 | F-005 | Disable directory indexing on `/docs/` | Easy | Sysadmin | 14 days |
+| 6 | F-002 | Restrict SSH exposure on the container bridge network; enforce key-based auth | Easy | Sysadmin | 14 days |
+| 7 | F-007 | Add missing security headers (HSTS, X-Content-Type-Options, CSP, Referrer-Policy, Permissions-Policy) | Easy | Web/App team | 30 days |
+| 8 | F-008 | Remove `.gitignore` and other build artifacts from the public web root | Easy | Sysadmin | 30 days |
+
+**Prioritization logic:** The single Critical finding (F-003) is addressed first regardless of effort, since it directly exposes user credentials. The two High findings (F-004, and the associated config-exposure risk) follow immediately after, both being low-effort fixes with outsized risk reduction. Remaining Medium and Low findings are sequenced by effort — easy wins first — since none individually block the higher-priority items.
+
+---
+
+## 7. Conclusion
+
+This assessment identified 8 findings across the DVWA test environment, ranging from one Critical exposure (cleartext login credentials) to several lower-severity hardening opportunities. The environment's overall posture reflects its purpose as an intentionally vulnerable training target — the findings here mirror the kinds of real-world misconfigurations (unencrypted authentication, exposed configuration directories, outdated software, missing security headers) that this assessment methodology is designed to catch before they reach production. All testing was conducted in a controlled, self-owned Docker/Kali lab for skills-development purposes, with no third-party or production systems involved.
+
+---
+
+## Appendix
+
+- Raw Nmap output: `nmap_results.txt`
+- Raw packet capture: `wireshark_capture.pcapng`
+- Raw Nikto output: `nikto_results.txt`
+- Screenshots: `/screenshots` folder
