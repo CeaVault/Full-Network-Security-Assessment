@@ -1,0 +1,28 @@
+# Nmap Scan Results
+# Command: sudo nmap -sV -O 172.17.0.0/24 -oN nmap_results.txt
+# Date: 2026-08-13 21:05 -0400
+# Target range: 172.17.0.0/24 (Docker bridge network)
+
+Starting Nmap 7.99 ( https://nmap.org ) at 2026-08-13 21:05 -0400
+Nmap scan report for 172.17.0.2
+Host is up (0.00015s latency).
+Not shown: 999 closed tcp ports (reset)
+PORT   STATE SERVICE VERSION
+80/tcp open  http    Apache httpd 2.4.25 ((Debian))
+MAC Address: 12:13:0A:F6:96:03 (Unknown)
+No exact OS matches for host (If you know what OS is running on it, see https://nmap.org/submit/ ).
+Network Distance: 1 hop
+
+Nmap scan report for 172.17.0.1
+Host is up (0.00014s latency).
+Not shown: 999 filtered tcp ports (no-response)
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 10.3p1 Debian 4 (protocol 2.0)
+Warning: OSScan results may be unreliable because we could not find at least 1 open and 1 closed port
+Aggressive OS guesses: Linux 5.0 - 6.2 (96%), HP P2000 G3 NAS device (92%), Linux 3.7 - 4.19 (91%), Android 7.0 (Linux 3.18) (91%), Linux 2.6.32 (91%), Linux 3.8 - 3.9 (91%), Linux 4.1 (91%), Linux 5.4 - 5.8 (91%), Linux 6.17 (91%), Linux 4.10 (91%), Linux 5.15 (90%)
+No exact OS matches for host (test conditions non-ideal).
+Network Distance: 0 hops
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+OS and Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 256 IP addresses (2 hosts up) scanned in 36.75 seconds
